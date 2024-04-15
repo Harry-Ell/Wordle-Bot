@@ -30,7 +30,9 @@ class WordleGame:
         return results
 
     def pick_random_word(self, exclude_word_list=None):
-        #removing words to be excluded, if desired
+        #Removing words to be excluded, if desired. 
+        #This feature could be integrated later on so when we train/optimise the bot, it will cycle through all the words in the list before coming back to old words. 
+        #If no exclude_word_list is integrated to the game, it could randomly pick the same word in succession, for example. Don't know if we want to implement this, just something to consider.
         temp_word_list = self.word_list
         if exclude_word_list: 
             temp_word_list = list(set(self.word_list) - set(exclude_word_list))
