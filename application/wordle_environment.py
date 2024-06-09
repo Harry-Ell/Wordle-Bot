@@ -91,5 +91,5 @@ class WordleGame:
 # Example usage. Use Ctrl+C to exit the game: 
 if __name__ == "__main__":
     game = WordleGame()
-    print(game.target_word)
+    #print(game.target_word)
     game.play_wordle()
