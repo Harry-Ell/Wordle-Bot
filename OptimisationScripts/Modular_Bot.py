@@ -4,8 +4,8 @@ import re
 import random 
 from pathlib import Path
 
-path1 = Path('WordleInputWords.txt')
-path2 = Path('WordleSolutionWords.txt')
+path1 = Path('Wordle words/WordleInputWords.txt')
+path2 = Path('Wordle words/WordleSolutionWords.txt')
 
 df1 = path1.read_text()
 df2 = path2.read_text()
