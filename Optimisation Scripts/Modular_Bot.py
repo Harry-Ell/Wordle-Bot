@@ -1,51 +1,52 @@
-import pandas as pd 
 import numpy as np 
+from skopt import gp_minimize
+from skopt.space import Real
+from skopt.utils import use_named_args
 import re
 import random 
 from pathlib import Path
 
-path1 = Path('Wordle words/WordleInputWords.txt')
-path2 = Path('Wordle words/WordleSolutionWords.txt')
+path1 = Path('Wordle Words/WordleInputWords.txt')
+path2 = Path('Wordle Words/WordleSolutionWords.txt')
 
 df1 = path1.read_text()
 df2 = path2.read_text()
 
 word_list = df1.splitlines()
 sol_list  = df2.splitlines()
-# bayesian optimisation needs to be implemented here
-# Parameters for scoring
-Parameters = {'Play_wordle_with': 100,       # Sets the number of wordle words we play with (14855 = max)
-              'Common_Letter': 1,            # Points awarded for shared letter 
-              'Common_Letter_Same_Index': 3, # Points awarded for shared letter, same index
-              'Degeneracy_Penalty_1':0.9,    # Penalty for 2 times repeated letters
-              'Degeneracy_Penalty_2':0.8,    # Penalty for 2 sets of repeated letters
-              'Degeneracy_Penalty_3':0.7,    # Penalty for 3 times repeated letter
-              'Degeneracy_Penalty_4':0.6,    # Higher degeneracy penalty ()
-              }
 
-
-def Load_Words_and_Populate_Score_Array(Parameters, word_list):
+def Load_Words_and_Populate_Raw_Score_Tensor(word_list):
 # Purpose of function: define collection of allowed words, and create an array from which scores (i.e.
 # ranking of word similarities) can be drawn. 
-# This function should only be ran once per usage of a set of params
-    trimmed_word_list = word_list[:Parameters['Play_wordle_with']] 
-    n = len(word_list)
-    nn = len(trimmed_word_list)
-    Scores = np.zeros((nn, nn))
-    for i in range(nn): 
+# This function is only ran once per optimisation procedure
+    number_of_words = len(word_list)
+    Yellow_Tally = np.zeros((number_of_words, number_of_words))
+    Green_Tally = np.zeros((number_of_words, number_of_words))
+    
+    for i in range(number_of_words): 
         sample = word_list[i]
         sample_word_letter = set(sample)
         sample_word_letter_and_place = {(sample[k], k) for k in range(5)}
-        for j in range(i + 1, nn):
+        for j in range(i + 1, number_of_words):
             working_word = word_list[j]
             working_word_letter = set(working_word)
             working_word_letter_and_place = {(working_word[l], l) for l in range(5)}
             common_letter = working_word_letter.intersection(sample_word_letter)
             common_letter_and_place = working_word_letter_and_place.intersection(sample_word_letter_and_place)
-            sample_score = len(common_letter) * Parameters['Common_Letter'] + len(common_letter_and_place) * Parameters['Common_Letter_Same_Index']
-            Scores[i, j] = sample_score
-    return Scores 
-         
+            sample_score_yellow = len(common_letter) 
+            sample_score_green  = len(common_letter_and_place) 
+            Yellow_Tally[i, j] = sample_score_yellow
+            Green_Tally[i, j]  = sample_score_green
+    Score_tensor = np.stack((Yellow_Tally.astype(int), Green_Tally.astype(int)), axis = -1)
+    return Score_tensor
+Score_Tensor = Load_Words_and_Populate_Raw_Score_Tensor(word_list)
+
+def Score_tensor_for_set_of_params(Score_Tensor, Parameters):
+    v = np.array([Parameters['Common_Letter'], Parameters['Common_Letter_Same_Index']])  # first index yellow, second is green 
+    v_broadcasted = v[np.newaxis, np.newaxis, :]  # shape will be (1, 1, 2)
+    output = np.sum(Score_Tensor * v_broadcasted, axis=-1)  # Sum along the last axis (axis=-1)
+    return output
+    
 def Possible_Words(Board_State, word_list, Parameters):
     Greens, Yellows, Greys, Repeated, Not_Repeated = Board_State
     list = word_list[:Parameters['Play_wordle_with']]
@@ -107,10 +108,8 @@ def Possible_Words_and_degeneracies(Board_State, word_list, Parameters):
                 sample_multiplier = Parameters['Degeneracy_Penalty_1']
             if sample_degeneracy == 4:
                 sample_multiplier = Parameters['Degeneracy_Penalty_2']
-            if sample_degeneracy == 6:
-                sample_multiplier = Parameters['Degeneracy_Penalty_3']
             if sample_degeneracy >= 6:
-                sample_multiplier = Parameters['Degeneracy_Penalty_4']
+                sample_multiplier = Parameters['Degeneracy_Penalty_3']
         Collection_of_Words.append([word, index, sample_multiplier])
     return Collection_of_Words
 
@@ -128,6 +127,16 @@ def Best_Choice_Word(Available_Word_Lists, Score_Array):
             best_total = total * degen
             best_word = column[0]
     return best_word
+    
+def find_duplicate_letters(word):
+    seen_letters = set()
+    duplicates = []
+    
+    for letter in word.lower():  # convert to lowercase
+        if letter in seen_letters and letter not in duplicates:
+            duplicates.append(letter)
+        seen_letters.add(letter)
+    return duplicates
 
 def Update_Board(Guesses, Target_Word):
     greens = ['_', '_', '_', '_', '_']
@@ -165,10 +174,16 @@ def Update_Board(Guesses, Target_Word):
                     known_repeated.append(word[i])
             else:
                 greys.append(word[i])
+    duplicates = find_duplicate_letters(word)
     
+    if duplicates: 
+        for item in duplicates:
+            if item in target_repeated: 
+                known_repeated.append(item)
+            else: 
+                known_not_repeated.append(item)         
     # Remove duplicate gray letters
     greys = list(set(greys))
-    
     return [greens, yellows, greys, known_repeated, known_not_repeated]
 
 def Play_Wordle(Score_Array, Target_Word, First_Guess, Parameters, word_list):
@@ -190,22 +205,46 @@ def Play_Wordle(Score_Array, Target_Word, First_Guess, Parameters, word_list):
             break
     return Guesses
 
-def average_guesses_for_random_words(Score_Array, first_guess, Parameters, word_list, num_words=100):
+def average_guesses_for_random_words(Score_Array, first_guess, Parameters, word_list, num_words=1000):
 # Function to play Wordle with 100 random words and return the average length of guesses 
-    Score_Array = Load_Words_and_Populate_Score_Array(Parameters, word_list)
+    Score_Array = Score_tensor_for_set_of_params(Score_Tensor, Parameters)
     random_words = random.sample(word_list[:Parameters['Play_wordle_with']], num_words)
     lengths = []
     
     for target_word in random_words:
         Game = Play_Wordle(Score_Array, target_word, first_guess, Parameters, word_list)
         lengths.append(len(Game))
-        print(f"Target Word: {target_word}, Guesses: {Game}")
+       # print(f"Target Word: {target_word}, Guesses: {Game}")
     
     average_length = sum(lengths) / len(lengths)
     return average_length
 
-# average_length = average_guesses_for_random_words([], 'tares', Parameters, word_list)
-# print(f"Average number of guesses: {average_length}")
-Score_Array = Load_Words_and_Populate_Score_Array(Parameters=Parameters, word_list = word_list)
-attempts = Play_Wordle(Score_Array, 'manga', 'crane', Parameters, word_list)
-print(attempts)
+# The final function to be made is the one for the task of optimisation. This will be done using 'skopt'
+# This function needs to be a built in testing environment, where the only input taken is the parameters. 
+param_space = [
+    Real(2.5, 3.5, name='common_letter_same_index_bonus'),
+    Real(0.7, 1,   name='duplicate_letter_penalty'),
+    Real(0.6, 1,   name='double_duplicate_letter_penalty'),
+    Real(0.4, 1,   name='more_degenerate')
+]
+
+# Define the objective function to be optimised
+def opt_funct(common_letter_same_index_bonus, duplicate_letter_penalty, double_duplicate_letter_penalty,
+            more_degenerate):
+    Parameters = {'Play_wordle_with': 14855,                                # Sets the number of wordle words we play with (14855 = max)
+                'Common_Letter': 1,                       # Points awarded for shared letter 
+                'Common_Letter_Same_Index': common_letter_same_index_bonus, # Points awarded for shared letter, same index
+                'Degeneracy_Penalty_1':duplicate_letter_penalty,            # Penalty for 2 times repeated letters
+                'Degeneracy_Penalty_2':double_duplicate_letter_penalty,     # Penalty for 2 sets of repeated letters
+                'Degeneracy_Penalty_3':more_degenerate,                     # Higher degeneracy penalty ()
+                }
+    average_length = average_guesses_for_random_words([], 'crane', Parameters, word_list)
+    print(average_length)
+    return average_length
+
+@use_named_args(param_space)
+def objective(**params):
+    return opt_funct(**params)
+
+result = gp_minimize(objective, param_space, n_calls=100, random_state=0, n_initial_points=10, n_jobs=1, verbose=True)
+print(result)
