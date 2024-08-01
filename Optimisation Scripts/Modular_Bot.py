@@ -1,3 +1,14 @@
+"""
+This script runs the Bayesian optimization procedure for the Wordle bot.
+In addition to building the bot, it includes the supporting infrastructure
+necessary for its operation. This infrastructure involves a virtual environment
+that plays Wordle with the bot, updates the board with each guess, returns the 
+new board state, and signals to the bot when it has correctly guessed the word.
+
+Note, this script is resource-intensive and may be too demanding to run 
+locally. Loading the score array requires approximately 2GB of working memory.
+"""
+
 import numpy as np 
 from skopt import gp_minimize
 from skopt.space import Real
